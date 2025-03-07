@@ -1,0 +1,6 @@
+libraries/
+__pycache__/
+files/
+data/
+test.py
+.env

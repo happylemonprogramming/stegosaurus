@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.git
+Procfile
+.gitignore
+libraries/
+files/
+data/
+test.py
+.env
