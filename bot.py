@@ -3,20 +3,24 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 # Internal programs
-from nostr.publish import nostrpost
+# from nostr.publish import nostrpost
 from nostr.getevent import getevent
 from lsbSteganography import decode_text_from_url, extract_image_url
+from emojiDecoder import detect_and_decode_emoji_steganography
 
 # Outside programs
 import asyncio, os, json, ast, re
 from nostr_sdk import Client, PublicKey, NostrSigner, Keys, Event, UnsignedEvent, Filter, \
-    HandleNotification, Timestamp, nip04_decrypt, ClientMessage, EventBuilder, UnwrappedGift, init_logger, LogLevel, Kind, KindEnum
+    HandleNotification, Timestamp, nip04_decrypt, ClientMessage, EventBuilder, UnwrappedGift, \
+    init_logger, LogLevel, Kind, Tag, nip04_encrypt
 
 # Set Contact and Private Key
 lemon = "npub1hee433872q2gen90cqh2ypwcq9z7y5ugn23etrd2l2rrwpruss8qwmrsv6"
-lemonhex = PublicKey.from_bech32(lemon).to_hex()
+# lemonhex = PublicKey.from_bech32(lemon).to_hex()
+lemonhex = PublicKey.parse(lemon).to_hex()
 botpubkey = "npub13p25qtngtldjyk5p7y457h3hxyq54lwennvkku42zg24h5gfjqvsgmpwxc"
-botpubhex = PublicKey.from_bech32(botpubkey).to_hex()
+# botpubhex = PublicKey.from_bech32(botpubkey).to_hex()
+botpubhex = PublicKey.parse(botpubkey).to_hex()
 private_key = os.environ["stegonostrkey"]
 
 # Initialize lists
@@ -51,23 +55,35 @@ async def main():
 
     now = Timestamp.now()
 
-    nip04_filter = Filter().pubkey(pk).kind(Kind.from_enum(KindEnum.ENCRYPTED_DIRECT_MESSAGE())).since(now)
-    mentions = Filter().pubkey(pk).kind(Kind.from_enum(KindEnum.TEXT_NOTE())).since(now)
-    nip59_filter = Filter().pubkey(pk).kind(Kind.from_enum(KindEnum.GIFT_WRAP())).limit(0)
-    await client.subscribe([nip04_filter, nip59_filter, mentions], None)
+    # nip04_filter = Filter().pubkey(pk).kind(Kind.from_enum(KindEnum.ENCRYPTED_DIRECT_MESSAGE())).since(now)
+    # mentions = Filter().pubkey(pk).kind(Kind.from_enum(KindEnum.TEXT_NOTE())).since(now)
+    # nip59_filter = Filter().pubkey(pk).kind(Kind.from_enum(KindEnum.GIFT_WRAP())).limit(0)
+    nip04_filter = Filter().pubkey(pk).kind(Kind(4)).since(now)
+    mentions = Filter().pubkey(pk).kind(Kind(1)).since(now)
+    nip59_filter = Filter().pubkey(pk).kind(Kind(14)).limit(0)
+    # await client.subscribe([nip04_filter, nip59_filter, mentions], None)
+    await client.subscribe(mentions, None)
 
     class NotificationHandler(HandleNotification):
         async def handle(self, relay_url, subscription_id, event: Event):
             logging.info(f"Received new event from {relay_url}: {event.as_json()}")
-            if event.kind().as_enum() == KindEnum.ENCRYPTED_DIRECT_MESSAGE():
+            # if event.kind().as_enum() == KindEnum.ENCRYPTED_DIRECT_MESSAGE():
+            if event.kind().as_u16() == 4: #Encrypted direct message
                 logging.info("Decrypting NIP04 event")
                 try:
                     msg = nip04_decrypt(sk, event.author(), event.content())
-                    await client.send_private_msg(receiver=event.author(), message=help_message, reply_to=None)
+                    # await client.send_private_msg(receiver=event.author(), message=help_message, reply_to=None)
+                    # secret = await make_private_msg(keys, event.author(), help_message)
+                    # await client.send_event(secret)
+                    # await client.send_direct_msg(event.author(), help_message, None)
+                    encrypted_content = nip04_encrypt(sk, event.author(), help_message)
+                    builder = EventBuilder(Kind(4), encrypted_content).tag(Tag.public_key(event.author()))
+                    await client.send_event_builder(builder)
                     logging.info(f"Received new msg: {msg}")
                 except Exception as e:
                     logging.info(f"Error during content NIP04 decryption: {e}")
-            elif event.kind().as_enum() == KindEnum.GIFT_WRAP():
+            # elif event.kind().as_enum() == KindEnum.GIFT_WRAP():
+            elif event.kind().as_u16() == 1059: #Gift-wrapped event
                 logging.info("Decrypting NIP59 event")
                 try:
                     # Extract rumor
@@ -77,7 +93,8 @@ async def main():
 
                     # Check timestamp of rumor
                     if rumor.created_at().as_secs() >= now.as_secs():
-                        if rumor.kind().as_enum() == KindEnum.PRIVATE_DIRECT_MESSAGE():
+                        # if rumor.kind().as_enum() == KindEnum.PRIVATE_DIRECT_MESSAGE():
+                        if rumor.kind().as_u16() == 14: #Private message
                             msg = rumor.content()
                             logging.info(f"Received new msg [sealed]: {msg}")
                             await client.send_private_msg(sender, help_message, None)
@@ -85,10 +102,13 @@ async def main():
                             logging.info(f"{rumor.as_json()}")
                 except Exception as e:
                     logging.info(f"Error during content NIP59 decryption: {e}")
-            elif event.kind().as_enum() == KindEnum.TEXT_NOTE():
+            # elif event.kind().as_enum() == KindEnum.TEXT_NOTE():
+            elif event.kind().as_u16() == 1: #Text Note
                 logging.info('Mention notification!')
 
                 # Process each unique event
+                receiver = event.author()
+                reply = event.id()
                 event = json.loads(event.as_json())
                 logging.info("Event Initial:")
                 logging.info(event)
@@ -125,7 +145,6 @@ async def main():
                                 relay_hint = tag[2] if len(tag) >= 3 else None
                                 break
 
-
                     # Get target event
                     try:
                         target_event = await getevent(id=target_eventID, relay=relay_hint)
@@ -136,31 +155,81 @@ async def main():
                     except:
                         logging.info(f"Event Detection Issue: {target_eventID}")
                         message = 'Uh-oh! Unable to find event in relay list'
-                        await nostrpost(private_key=private_key, content=message, reply_to=eventID)
+                        # await nostrpost(private_key=private_key, content=message, reply_to=eventID)
+                        # await client.send_private_msg(receiver=receiver, message=message, reply_to=None)
+                        # secret = await make_private_msg(keys, event.author(), message)
+                        # await client.send_event(secret)
+                        # await client.send_direct_msg(receiver, message, reply)
+                        encrypted_content = nip04_encrypt(sk, receiver, message)
+                        builder = EventBuilder(Kind(4), encrypted_content).tags([Tag.public_key(receiver)])
+                        await client.send_event_builder(builder)
+
                         return "Consider adding new relays"
 
                     # Search for target language and source language
                     logging.info("Event Content:")
                     logging.info(str(target_event['content']))
                     encoded_url = extract_image_url(str(target_event['content']))
-                    logging.info("Extracted Encoded URL:")
-                    logging.info(encoded_url)
-                    decoded_text = decode_text_from_url(encoded_url)
-                    logging.info("Decoded Text:")
-                    logging.info(decoded_text)
-                    if decoded_text:
-                        await nostrpost(private_key=private_key, content=decoded_text, reply_to=eventID)
-                        return "Successful Decoding!"
+
+                    if encoded_url:
+                        logging.info("Extracted Encoded URL:")
+                        logging.info(encoded_url)
+                        decoded_text = decode_text_from_url(encoded_url)
+                        logging.info("Decoded Text:")
+                        logging.info(decoded_text)
+                        if decoded_text:
+                            # await nostrpost(private_key=private_key, content=decoded_text, reply_to=eventID)
+                            # await client.send_private_msg(receiver=receiver, message=decoded_text, reply_to=None)
+                            # secret = await make_private_msg(keys, event.author(), decoded_text)
+                            # await client.send_event(secret)
+                            # await client.send_direct_msg(receiver, decoded_text, reply)
+                            encrypted_content = nip04_encrypt(sk, receiver, decoded_text)
+                            builder = EventBuilder(Kind(4), encrypted_content).tags([Tag.public_key(receiver)])
+                            await client.send_event_builder(builder)
+                            return "Successful Decoding!"
+                        else:
+                            logging.info(f"No secret message detected: {target_eventID}")
+                            message = 'No secret message detected'
+                            # await nostrpost(private_key=message, content=message, reply_to=eventID)
+                            # await client.send_private_msg(receiver=receiver, message=message, reply_to=None)
+                            # secret = await make_private_msg(keys, event.author(), message)
+                            # await client.send_event(secret)
+                            # await client.send_direct_msg(receiver, message, reply)
+                            encrypted_content = nip04_encrypt(sk, receiver, message)
+                            builder = EventBuilder(Kind(4), encrypted_content).tags([Tag.public_key(receiver)])
+                            await client.send_event_builder(builder)
+                            return "Unsuccessful Decoding"
                     else:
-                        logging.info(f"No secret message detected: {target_eventID}")
-                        message = 'No secret message'
-                        await nostrpost(private_key=message, content=decoded_text, reply_to=eventID)
-                        return "Unsuccessful Decoding"
-                    
-                except:
-                    logging.info(f"Event Detection Issue: {target_eventID}")
-                    message = 'Uh-oh! Something broke'
-                    await nostrpost(private_key=private_key, content=message, reply_to=eventID)
+                        has_hidden, decoded_text = detect_and_decode_emoji_steganography(str(target_event['content']))
+                        if has_hidden:
+                            logging.info(decoded_text)
+                            encrypted_content = nip04_encrypt(sk, receiver, decoded_text)
+                            builder = EventBuilder(Kind(4), encrypted_content).tags([Tag.public_key(receiver)])
+                            await client.send_event_builder(builder)
+                            return "Successful Decoding!"
+                        else:
+                            logging.info(f"No secret message detected: {target_eventID}")
+                            message = 'No secret message detected'
+                            # await nostrpost(private_key=message, content=message, reply_to=eventID)
+                            # await client.send_private_msg(receiver=receiver, message=message, reply_to=None)
+                            # secret = await make_private_msg(keys, event.author(), message)
+                            # await client.send_event(secret)
+                            # await client.send_direct_msg(receiver, message, reply)
+                            encrypted_content = nip04_encrypt(sk, receiver, message)
+                            builder = EventBuilder(Kind(4), encrypted_content).tags([Tag.public_key(receiver)])
+                            await client.send_event_builder(builder)
+                            return "Unsuccessful Decoding"
+                except Exception as e:
+                    logging.error(f"An error occurred: {str(e)}")
+                    message = 'Uh-oh! Something broke while trying to decode image'
+                    # await nostrpost(private_key=private_key, content=message, reply_to=eventID)
+                    # await client.send_private_msg(receiver=receiver, message=message, reply_to=None)
+                    # secret = await make_private_msg(keys, event.author(), message)
+                    # await client.send_event(secret)
+                    # await client.send_direct_msg(receiver, message, reply)
+                    encrypted_content = nip04_encrypt(sk, receiver, message)
+                    builder = EventBuilder(Kind(4), encrypted_content).tags([Tag.public_key(receiver)])
+                    await client.send_event_builder(builder)
                     return f"Something broke when a New Event path was triggered."
 
         async def handle_msg(self, relay_url, msg):

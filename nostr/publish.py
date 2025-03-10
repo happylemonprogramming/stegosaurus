@@ -1,6 +1,6 @@
 import asyncio, os, json, ast
 from datetime import timedelta
-from nostr_sdk import Keys, Client, NostrSigner, Metadata, HttpData, HttpMethod, EventId, EventBuilder, Filter, EventSource, init_logger, LogLevel
+from nostr_sdk import Keys, Client, NostrSigner, Metadata, HttpData, HttpMethod, EventId, EventBuilder, Filter, init_logger, LogLevel
 init_logger(LogLevel.WARN)
 
 # Get relay list
@@ -27,8 +27,9 @@ async def nostrpost(private_key, content, kind=None, reply_to=None, url=None, pa
     if content and reply_to: # Replies
         # Create Event Object
         f = Filter().id(EventId.parse(reply_to))
-        source = EventSource.relays(timeout=timedelta(seconds=10))
-        reply_to = await client.get_events_of([f], source)
+        # source = EventSource.relays(timeout=timedelta(seconds=10))
+        # reply_to = await client.get_events_of([f], source)
+        reply_to = await client.fetch_events([f], timedelta(seconds=10))
         reply_to = reply_to[0]
         builder = EventBuilder.text_note_reply(content=content, reply_to=reply_to)
     elif url and payload: # NIP98
@@ -44,8 +45,10 @@ async def nostrpost(private_key, content, kind=None, reply_to=None, url=None, pa
     
     # Get event ID from relays
     f = Filter().authors([keys.public_key()]).limit(1)
-    source = EventSource.relays(timedelta(seconds=10))
-    events = await client.get_events_of([f], source)
+    # source = EventSource.relays(timedelta(seconds=10))
+    # events = await client.get_events_of([f], source)
+    events = await client.fetch_events(f, timedelta(seconds=30))
+
     for event in events:
         event = event.as_json()
         eventID = json.loads(event)['id']

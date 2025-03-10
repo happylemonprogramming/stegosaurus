@@ -3,7 +3,7 @@ __pycache__/
 .git
 Procfile
 .gitignore
-libraries/
+venv/
 files/
 data/
 test.py

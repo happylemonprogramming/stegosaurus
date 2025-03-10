@@ -1,6 +1,6 @@
 import os, json, re, ast
 from datetime import timedelta
-from nostr_sdk import Client, EventId, PublicKey, Kind, Filter, EventSource, init_logger, LogLevel, Timestamp
+from nostr_sdk import Client, EventId, PublicKey, Kind, Filter, init_logger, LogLevel, Events
 init_logger(LogLevel.WARN)
 
 # Get relay list
@@ -36,12 +36,15 @@ async def getevent(id=None, kind=1, pubkey=None, event=None, since=None, author=
     else:
         raise Exception("Unrecognized request for event retreival")
 
-    source = EventSource.relays(timeout=timedelta(seconds=30))
-    events = await client.get_events_of([f], source)
-    
+    # source = EventSource.relays(timeout=timedelta(seconds=30))
+    # events = await client.get_events_of([f], source)
+    # events = await client.get_events_of([f], timedelta(seconds=10))
+
+    events = await client.fetch_events(f, timedelta(seconds=30))
+
     # Convert objects into list of dictionaries
     event_list = []
-    for event in events:
+    for event in events.to_vec():
         event = event.as_json()
         event = json.loads(event)
         event_list.append(event)
